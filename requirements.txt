@@ -1,5 +1,4 @@
 asyncio
 numpy
-argparse
-python-osc
+pythonosc
 bleak
