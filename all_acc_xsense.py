@@ -5,15 +5,17 @@ import argparse
 from pythonosc import udp_client
 from bleak import BleakClient, BleakScanner
 
-# Lista de endereços dos sensores
-addresses = ['d4:22:cd:00:a6:83','d4:22:cd:00:a5:66','d4:22:cd:00:9f:ba','d4:22:cd:00:9f:ee','d4:22:cd:00:9b:2b']  # Adicione outros endereços aqui
+# Sensor addresses
+addresses = ['d4:22:cd:00:a6:83','d4:22:cd:00:a5:66','d4:22:cd:00:9f:ba','d4:22:cd:00:9f:ee','d4:22:cd:00:9b:2b']
 short_payload_characteristic_uuid = '15172004-4947-11e9-8646-d663bd873d93'
 measurement_characteristic_uuid = '15172001-4947-11e9-8646-d663bd873d93'
-oscv = ""
-#'d4:22:cd:00:9f:ee'
+
 payload_modes = {
     "Free acceleration": [6, b'\x06'],
 }
+
+# Dictionary to store lists of x, y, and z values for variance calculation
+sensor_data = {sensor_id: {'x': [], 'y': [], 'z': []} for sensor_id in range(1, len(addresses) + 1)}
 
 def encode_free_accel_bytes_to_string(bytes_):
     data_segments = np.dtype([
@@ -26,13 +28,45 @@ def encode_free_accel_bytes_to_string(bytes_):
     formatted_data = np.frombuffer(bytes_, dtype=data_segments)
     return formatted_data
 
+def calculate_axis_variance(sensor_id):
+    x_variance = np.var(sensor_data[sensor_id]['x'])
+    y_variance = np.var(sensor_data[sensor_id]['y'])
+    z_variance = np.var(sensor_data[sensor_id]['z'])
+    
+    # Identify the axis with the highest variance
+    variances = {'x': x_variance, 'y': y_variance, 'z': z_variance}
+    max_variance_axis = max(variances, key=variances.get)
+    
+    return max_variance_axis
+
 def handle_short_payload_notification(sender, data, sensor_id):
     print(f'Short payload notification received from sensor {sensor_id}.')
     oscv = encode_free_accel_bytes_to_string(data)
-    client.send_message(f"/sensor_{sensor_id}/x", oscv.item(0)[1])
-    client.send_message(f"/sensor_{sensor_id}/y", oscv.item(0)[2])
-    client.send_message(f"/sensor_{sensor_id}/z", oscv.item(0)[3])
-    print(f"Sensor {sensor_id} - X: {oscv.item(0)[1]} Y: {oscv.item(0)[2]} Z: {oscv.item(0)[3]}")
+    x, y, z = oscv.item(0)[1], oscv.item(0)[2], oscv.item(0)[3]
+    
+    # Send OSC messages for x, y, z values
+    client.send_message(f"/sensor_{sensor_id}/x", x)
+    client.send_message(f"/sensor_{sensor_id}/y", y)
+    client.send_message(f"/sensor_{sensor_id}/z", z)
+    print(f"Sensor {sensor_id} - X: {x} Y: {y} Z: {z}")
+    
+    # Store the data for variance calculation
+    sensor_data[sensor_id]['x'].append(x)
+    sensor_data[sensor_id]['y'].append(y)
+    sensor_data[sensor_id]['z'].append(z)
+    
+    # Calculate variance and send the axis with the highest variance if we have enough data points
+    if len(sensor_data[sensor_id]['x']) >= 10:  # Adjust for preferred interval
+        max_variance_axis = calculate_axis_variance(sensor_id)
+        
+        # Send the name of the axis with the maximum variance as an OSC message
+        client.send_message(f"/sensor_{sensor_id}/max_variance_axis", max_variance_axis)
+        print(f"Sensor {sensor_id} - Axis with max variance: {max_variance_axis}")
+        
+        # Clear the lists to start fresh for the next variance calculation window
+        sensor_data[sensor_id]['x'].clear()
+        sensor_data[sensor_id]['y'].clear()
+        sensor_data[sensor_id]['z'].clear()
 
 async def run_sensor(ble_address, sensor_id):
     print(f'Looking for Bluetooth LE device at address `{ble_address}`...')
@@ -67,9 +101,9 @@ async def main():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ip", default="127.0.0.1",
+    parser.add_argument("--ip", default="192.168.15.6",
                         help="The IP of the OSC server")
-    parser.add_argument("--port", type=int, default=54321,
+    parser.add_argument("--port", type=int, default=5555,
                         help="The port the OSC server is listening on")
     args = parser.parse_args()
 
