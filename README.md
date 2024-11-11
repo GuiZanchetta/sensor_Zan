@@ -4,9 +4,10 @@ Short scripts for interacting with Xsens DOTs with Python and Bleak
 
 ## Requirements
 
-* Python 3 (3.9.6)
+* Python 3 (3.9.6 or >)
 * [Bleak Bluetooth LE (0.18.1)](https://github.com/hbldh/bleak)
 * [Numpy](https://numpy.org/)
+* python-osc
 * One or more [Xsens DOT sensors](https://www.xsens.com/xsens-dot)
 
 ## Examples
