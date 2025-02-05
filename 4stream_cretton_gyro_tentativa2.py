@@ -1,47 +1,17 @@
-'''
-Turn on "measurement" service for Xsens DOT.
-
-Turns on the Measurement service and sets the Payload mode (quaternion, Euler, etc.)
-Characteristic/Service UUIDs and data encoding are available in
-Xsens's "Xsens DOT BLE Services Specifications.pdf" document.
-
-Requires Bleak (Bluetooth LE Agnostic Klient)
-    - https://github.com/hbldh/bleak
-    - https://bleak.readthedocs.io/en/latest/
-
-Example output:
-    $ python3 turn_on_measurement_service.py
-    ...
-    Short payload notification received.
-        Sender: 15172004-4947-11e9-8646-d663bd873d93 (Handle: 42): Unknown
-        Data: bytearray(b'\xd8\x05"D\xaf\x96@@k*\xa7@Z\xdd\x14\xc0\x00\x00\x00\x00')
-        Encoded Free Acceleration: [(1143080408, 3.009197, 5.223928, -2.3260102, 0)]
-    Short payload notification received.
-        Sender: 15172004-4947-11e9-8646-d663bd873d93 (Handle: 42): Unknown
-        Data: bytearray(b'\xf3F"D\r\xa5<@\x9c\x13\xa6@\xf0\x10\t\xc0\x00\x00\x00\x00')
-        Encoded Free Acceleration: [(1143097075, 2.947574, 5.1898937, -2.1416588, 0)]
-'''
-
 # Import required modules, libraries, and classes (Random only used for testing) 
-
 import asyncio
 import numpy as np
 import sys
 import argparse
-import random
-import time
 from pythonosc import udp_client
-from pythonosc import osc_message_builder
 from bleak import BleakClient, BleakScanner
 
-
 # Replace `address` with your Xsens DOT's address
-address = 'D4:22:CD:00:52:E6'
+address = 'd4:22:cd:00:a6:83'
 short_payload_characteristic_uuid = '15172004-4947-11e9-8646-d663bd873d93'
 measurement_characteristic_uuid = '15172001-4947-11e9-8646-d663bd873d93'
-oscv = ""
 
-# For reference. Only "Free acceleration" is used in this example script.
+# Payload modes (for reference)
 payload_modes = {
     "High Fidelity (with mag)": [1, b'\x01'],
     "Extended (Quaternion)": [2, b'\x02'],
@@ -63,76 +33,106 @@ payload_modes = {
     "Custom mode 5": [26, b'\x1A'],
 }
 
-def encode_gyro1_bytes_to_string(bytes_):
-    # These bytes are grouped according to Xsens's BLE specification doc
-    data_segments = np.dtype([
-        ('timestamp', np.uint32),
-        ('x', np.float32),
-        ('y', np.float32),
-        ('z', np.float32),
-        ('zero_padding', np.uint32)
-        ])
-    formatted_data = np.frombuffer(bytes_, dtype=data_segments)
-    return formatted_data
+# 🔥 Atualizado para suportar 40 bytes corretamente
+def decode_sensor_data(data: bytes):
+    """Decodifica o payload de 40 bytes do Xsens DOT."""
+    expected_size = 40  # Ajuste para o tamanho correto
 
+    if len(data) != expected_size:
+        print(f"Erro de decodificação: Esperado {expected_size} bytes, recebido {len(data)} bytes")
+        return None
+
+    try:
+        # Estrutura do payload de 40 bytes
+        data_segments = np.dtype([
+            ('timestamp', np.uint32),      # 4 bytes
+            ('acc_x', np.float32),         # 4 bytes
+            ('acc_y', np.float32),         # 4 bytes
+            ('acc_z', np.float32),         # 4 bytes
+            ('gyro_x', np.float32),        # 4 bytes
+            ('gyro_y', np.float32),        # 4 bytes
+            ('gyro_z', np.float32),        # 4 bytes
+            ('extra_x', np.float32),       # 4 bytes (possível magnetômetro ou quaternions)
+            ('extra_y', np.float32),       # 4 bytes
+            ('extra_z', np.float32),       # 4 bytes
+        ])
+
+        decoded_data = np.frombuffer(data, dtype=data_segments)
+        return decoded_data
+
+    except Exception as e:
+        print(f"Erro ao decodificar payload: {str(e)}")
+        return None
+
+# 🔥 Ajustado para enviar todos os novos dados
 def handle_short_payload_notification(sender, data):
-    print('Short payload notification received.')
+    """Manipula a notificação de payload curto e envia os dados via OSC."""
+    print('Notificação de payload curto recebida.')
     print(f'\tSender: {sender}')
-    print(f'\tData: {data}')
-    oscv = encode_gyro1_bytes_to_string(data)
-    client.send_message("/gyro/x", oscv.item(0)[1])
-    client.send_message("/gyro/y", oscv.item(0)[2])
-    client.send_message("/gyro/z", oscv.item(0)[3])
-    print ((oscv.item(0)[1]))
-    print ((oscv.item(0)[2]))
-    print ((oscv.item(0)[3]))
-    #testandogithub
+    print(f'\tData Bruta: {data.hex()}')
+
+    decoded_data = decode_sensor_data(data)
+    if decoded_data is None:
+        return  # Ignorar pacotes malformados
+
+    # Extrair os valores decodificados
+    timestamp = decoded_data['timestamp'][0]
+    acc_x, acc_y, acc_z = decoded_data['acc_x'][0], decoded_data['acc_y'][0], decoded_data['acc_z'][0]
+    gyro_x, gyro_y, gyro_z = decoded_data['gyro_x'][0], decoded_data['gyro_y'][0], decoded_data['gyro_z'][0]
+    extra_x, extra_y, extra_z = decoded_data['extra_x'][0], decoded_data['extra_y'][0], decoded_data['extra_z'][0]
+
+    # Enviar via OSC
+    client.send_message("/acc/x", acc_x)
+    client.send_message("/acc/y", acc_y)
+    client.send_message("/acc/z", acc_z)
+    client.send_message("/gyro/x", gyro_x)
+    client.send_message("/gyro/y", gyro_y)
+    client.send_message("/gyro/z", gyro_z)
+    client.send_message("/extra/x", extra_x)
+    client.send_message("/extra/y", extra_y)
+    client.send_message("/extra/z", extra_z)
+    client.send_message("/timestamp", timestamp)
+
+    # Exibir os valores no terminal
+    print(f"[{timestamp}] Acc: {acc_x:.3f}, {acc_y:.3f}, {acc_z:.3f} | "
+          f"Gyro: {gyro_x:.3f}, {gyro_y:.3f}, {gyro_z:.3f} | "
+          f"Extra: {extra_x:.3f}, {extra_y:.3f}, {extra_z:.3f}")
 
 async def main(ble_address):
-    print(f'Looking for Bluetooth LE device at address `{ble_address}`...')
+    """Conecta ao dispositivo BLE e inicia a leitura do sensor."""
+    print(f'Procurando dispositivo BLE no endereço `{ble_address}`...')
     device = await BleakScanner.find_device_by_address(ble_address, timeout=20.0)
-    if(device == None):
-        print(f'A Bluetooth LE device with the address `{ble_address}` was not found.')
-    else:
-        print(f'Client found at address: {ble_address}')
-        print(f'Connecting...')
-        # This `async` block starts and keeps the Bluetooth LE device connection.
-        # Once the `async` block exits, the BLE device automatically disconnects.
-        async with BleakClient(device) as client:
-            print(f'Client connection = {client.is_connected}')
+    if device is None:
+        print(f'Dispositivo BLE com endereço `{ble_address}` não encontrado.')
+        return
 
-            '''
-            Turn on notification for a "short payload" (UUID: 0x2004). A measurement mode
-            will have either a short, medium, or long payload. Each payload needs to be
-            turned on separately (i.e. write an enable message to a payload's characteristic UUID)
-            '''
-            print(f'Turning on Short Payload notification at `{short_payload_characteristic_uuid}`...')
-            await client.start_notify(short_payload_characteristic_uuid, handle_short_payload_notification)
-            print('Notifications turned on.')
+    print(f'Conectando ao dispositivo...')
+    async with BleakClient(device) as client:
+        print(f'Conectado: {client.is_connected}')
 
-            '''
-            Turn on the Measurement characteristic
-            '''
-            payload_mode_values = payload_modes["Orientation (Euler)"]
-            payload_mode = payload_mode_values[1] # is in b'\x00' format
-            measurement_default = b'\x01' # This apparently never changes
-            start_measurement = b'\x01' # 01 = start, 00 = stop
-            full_turnon_payload = measurement_default + start_measurement + payload_mode # b'\x01\x01\x06'
-            print(f'Setting payload with binary: {full_turnon_payload}')
-            write = await client.write_gatt_char(measurement_characteristic_uuid, full_turnon_payload, True)
-            print(f'Streaming turned on.')
-            await asyncio.sleep(100.0) # How long to stream data for
-            print(f'Streaming turned off.')
+        # Habilitar notificações de payload curto
+        print(f'Habilitando notificações de payload curto...')
+        await client.start_notify(short_payload_characteristic_uuid, handle_short_payload_notification)
+        print('Notificações ativadas.')
 
-        print(f'Disconnected from `{ble_address}`')
+        # Configurar o modo de medição
+        payload_mode = payload_modes["High Fidelity"][1]  # Configuração ajustável
+        measurement_default = b'\x01'
+        start_measurement = b'\x01'
+        full_turnon_payload = measurement_default + start_measurement + payload_mode
+        print(f'Setando payload com: {full_turnon_payload}')
+        await client.write_gatt_char(measurement_characteristic_uuid, full_turnon_payload, True)
+        print(f'Streaming ativado.')
 
+        await asyncio.sleep(100.0)  # Tempo de streaming
+        print(f'Streaming desligado.')
+
+    print(f'Desconectado de `{ble_address}`')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ip", default="10.42.0.70",
-                        help="The ip of the OSC server")
-    parser.add_argument("--port", type=int, default=54322,
-                        help="The port the OSC server is listening on")
+    parser.add_argument("--ip", default="192.168.15.7", help="Endereço IP do servidor OSC")
+    parser.add_argument("--port", type=int, default=5555, help="Porta do servidor OSC")
     args = parser.parse_args()
 
     client = udp_client.SimpleUDPClient(args.ip, args.port)

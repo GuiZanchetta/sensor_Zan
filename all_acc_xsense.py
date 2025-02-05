@@ -101,7 +101,7 @@ async def main():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ip", default="192.168.15.4",
+    parser.add_argument("--ip", default="192.168.15.7",
                         help="The IP of the OSC server")
     parser.add_argument("--port", type=int, default=5555,
                         help="The port the OSC server is listening on")
